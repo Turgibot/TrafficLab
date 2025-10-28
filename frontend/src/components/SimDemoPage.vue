@@ -50,6 +50,19 @@
                   <span class="mr-2 text-green-400">📈</span>
                   Model Performance Analysis
                 </h3>
+                <button 
+                  @click="generatePDF" 
+                  class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition-colors duration-200 flex items-center"
+                  :disabled="isGeneratingPDF"
+                >
+                  <svg v-if="!isGeneratingPDF" class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                  </svg>
+                  <svg v-else class="w-3 h-3 mr-1 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                  </svg>
+                  {{ isGeneratingPDF ? 'Generating...' : 'Export PDF' }}
+                </button>
               </div>
               
               <!-- Statistics Content -->
@@ -940,6 +953,7 @@
 
 <script>
 import apiService from '../services/api.js'
+import jsPDF from 'jspdf'
 
 export default {
   name: 'SimDemoPage',
@@ -1064,7 +1078,10 @@ export default {
       routeDuration: null,
       
       // Animation intervals
-      simulationUpdateInterval: null
+      simulationUpdateInterval: null,
+      
+      // PDF generation state
+      isGeneratingPDF: false
     }
   },
   methods: {
@@ -2407,6 +2424,255 @@ export default {
       } catch (error) {
         console.error('Error calculating duration in seconds:', error)
         return 0
+      }
+    },
+    
+    // PDF Generation Method
+    async generatePDF() {
+      this.isGeneratingPDF = true
+      
+      try {
+        // Create new PDF document
+        const pdf = new jsPDF('p', 'mm', 'a4')
+        
+        // Add title
+        pdf.setFontSize(20)
+        pdf.text('Traffic Analysis Report', 20, 30)
+        
+        // Add timestamp
+        pdf.setFontSize(10)
+        pdf.text(`Generated on: ${new Date().toLocaleString()}`, 20, 40)
+        
+        // Add basic statistics section
+        pdf.setFontSize(16)
+        pdf.text('Basic Statistics', 20, 60)
+        
+        pdf.setFontSize(12)
+        let yPosition = 75
+        
+        // Basic statistics
+        const stats = [
+          `Total Journeys: ${this.journeyStatistics.total_journeys || 0}`,
+          `Average Duration: ${this.formatTime(this.journeyStatistics.average_duration || 0)}`,
+          `Average Distance: ${((this.journeyStatistics.average_distance || 0) / 1000).toFixed(1)} km`,
+          `MAE: ${this.journeyStatistics.mae || 0} seconds`,
+          `RMSE: ${this.journeyStatistics.rmse || 0} seconds`,
+          `MAPE: ${(this.journeyStatistics.mape || 0).toFixed(1)}%`
+        ]
+        
+        stats.forEach(stat => {
+          pdf.text(stat, 20, yPosition)
+          yPosition += 7
+        })
+        
+        // Add MAE by trip duration section
+        yPosition += 10
+        pdf.setFontSize(16)
+        pdf.text('MAE by Trip Duration', 20, yPosition)
+        
+        pdf.setFontSize(12)
+        yPosition += 15
+        
+        const durationStats = [
+          `Short Trips (< 278s): ${this.journeyStatistics.short_trips?.mae || 0}s (${this.journeyStatistics.short_trips?.count || 0} trips)`,
+          `Medium Trips (278-609s): ${this.journeyStatistics.medium_trips?.mae || 0}s (${this.journeyStatistics.medium_trips?.count || 0} trips)`,
+          `Long Trips (> 609s): ${this.journeyStatistics.long_trips?.mae || 0}s (${this.journeyStatistics.long_trips?.count || 0} trips)`
+        ]
+        
+        durationStats.forEach(stat => {
+          pdf.text(stat, 20, yPosition)
+          yPosition += 7
+        })
+        
+        // Add MAE by trip distance section
+        yPosition += 10
+        pdf.setFontSize(16)
+        pdf.text('MAE by Trip Distance', 20, yPosition)
+        
+        pdf.setFontSize(12)
+        yPosition += 15
+        
+        const distanceStats = [
+          `Short Distance (< 4km): ${this.journeyStatistics.short_trips_distance?.mae || 0}s (${this.journeyStatistics.short_trips_distance?.count || 0} trips)`,
+          `Medium Distance (4-11km): ${this.journeyStatistics.medium_trips_distance?.mae || 0}s (${this.journeyStatistics.medium_trips_distance?.count || 0} trips)`,
+          `Long Distance (> 11km): ${this.journeyStatistics.long_trips_distance?.mae || 0}s (${this.journeyStatistics.long_trips_distance?.count || 0} trips)`
+        ]
+        
+        distanceStats.forEach(stat => {
+          pdf.text(stat, 20, yPosition)
+          yPosition += 7
+        })
+        
+        // Add page break and add individual plots
+        pdf.addPage()
+        pdf.setFontSize(16)
+        pdf.text('Visual Analysis - Plots', 20, 30)
+        
+        let plotYPosition = 50
+        
+        // Define all available plots
+        const plotCategories = [
+          {
+            title: 'Trip Duration vs MAE Scatter Plot',
+            apiMethod: () => apiService.getDurationVsMaePlotImage(),
+            plotType: 'duration-vs-mae-scatter'
+          },
+          {
+            title: 'Trip Distance vs MAE Scatter Plot',
+            apiMethod: () => apiService.getDistanceVsMaePlotImage(),
+            plotType: 'distance-vs-mae-scatter'
+          },
+          {
+            title: 'MAE by Time of Day',
+            apiMethod: () => apiService.getMaeByTimePlotImage(),
+            plotType: 'mae-by-time'
+          }
+        ]
+        
+        const durationHistogramCategories = ['short', 'medium', 'long']
+        const distanceHistogramCategories = ['short', 'medium', 'long']
+        
+        // Add scatter plots and time analysis
+        for (const plot of plotCategories) {
+          try {
+            // Get the plot image
+            const response = await plot.apiMethod()
+            
+            if (response && response.success && response.image) {
+              // Check if we need a new page
+              if (plotYPosition > 200) {
+                pdf.addPage()
+                plotYPosition = 20
+              }
+              
+              // Add plot title
+              pdf.setFontSize(14)
+              pdf.text(plot.title, 20, plotYPosition)
+              plotYPosition += 10
+              
+              // Convert base64 image to data URL
+              const imgData = response.image
+              
+              // Extract base64 part if it's a data URL
+              let base64Data = imgData
+              if (imgData.startsWith('data:image/png;base64,')) {
+                base64Data = imgData.split(',')[1]
+              }
+              
+              // Add the image
+              const imgWidth = 170
+              const imgHeight = 100  // Standardize plot height
+              
+              pdf.addImage(base64Data, 'PNG', 15, plotYPosition, imgWidth, imgHeight)
+              plotYPosition += 120
+            }
+          } catch (error) {
+            console.warn(`Could not load plot ${plot.title}:`, error)
+          }
+        }
+        
+        // Add duration histogram plots
+        pdf.addPage()
+        pdf.setFontSize(16)
+        pdf.text('Trip Duration vs MAE Histograms', 20, 30)
+        plotYPosition = 50
+        
+        for (const category of durationHistogramCategories) {
+          try {
+            const response = await apiService.getDurationHistogramPlotImage(category)
+            
+            if (response && response.success && response.image) {
+              // Check if we need a new page
+              if (plotYPosition > 200) {
+                pdf.addPage()
+                pdf.setFontSize(16)
+                pdf.text('Trip Duration vs MAE Histograms (continued)', 20, 30)
+                plotYPosition = 50
+              }
+              
+              // Add plot title
+              pdf.setFontSize(12)
+              pdf.text(`${category.charAt(0).toUpperCase() + category.slice(1)} Trips - Duration vs MAE`, 20, plotYPosition)
+              plotYPosition += 8
+              
+              // Convert base64 image to data URL
+              const imgData = response.image
+              
+              // Extract base64 part if it's a data URL
+              let base64Data = imgData
+              if (imgData.startsWith('data:image/png;base64,')) {
+                base64Data = imgData.split(',')[1]
+              }
+              
+              // Add the image
+              const imgWidth = 170
+              const imgHeight = 100
+              
+              pdf.addImage(base64Data, 'PNG', 15, plotYPosition, imgWidth, imgHeight)
+              plotYPosition += 115
+            }
+          } catch (error) {
+            console.warn(`Could not load duration histogram for ${category}:`, error)
+          }
+        }
+        
+        // Add distance histogram plots
+        pdf.addPage()
+        pdf.setFontSize(16)
+        pdf.text('Trip Distance vs MAE Histograms', 20, 30)
+        plotYPosition = 50
+        
+        for (const category of distanceHistogramCategories) {
+          try {
+            const response = await apiService.getDistanceHistogramPlotImage(category)
+            
+            if (response && response.success && response.image) {
+              // Check if we need a new page
+              if (plotYPosition > 200) {
+                pdf.addPage()
+                pdf.setFontSize(16)
+                pdf.text('Trip Distance vs MAE Histograms (continued)', 20, 30)
+                plotYPosition = 50
+              }
+              
+              // Add plot title
+              pdf.setFontSize(12)
+              pdf.text(`${category.charAt(0).toUpperCase() + category.slice(1)} Trips - Distance vs MAE`, 20, plotYPosition)
+              plotYPosition += 8
+              
+              // Convert base64 image to data URL
+              const imgData = response.image
+              
+              // Extract base64 part if it's a data URL
+              let base64Data = imgData
+              if (imgData.startsWith('data:image/png;base64,')) {
+                base64Data = imgData.split(',')[1]
+              }
+              
+              // Add the image
+              const imgWidth = 170
+              const imgHeight = 100
+              
+              pdf.addImage(base64Data, 'PNG', 15, plotYPosition, imgWidth, imgHeight)
+              plotYPosition += 115
+            }
+          } catch (error) {
+            console.warn(`Could not load distance histogram for ${category}:`, error)
+          }
+        }
+        
+        // Save the PDF
+        const fileName = `traffic-analysis-report-${new Date().toISOString().split('T')[0]}.pdf`
+        pdf.save(fileName)
+        
+        // Show success message
+        alert('PDF report generated successfully!')
+        
+      } catch (error) {
+        console.error('Error generating PDF:', error)
+        alert('Error generating PDF report. Please try again.')
+      } finally {
+        this.isGeneratingPDF = false
       }
     }
   },
