@@ -2698,8 +2698,8 @@ export default {
     this.loadSimulationStatus()
     this.loadJourneyStatistics()
     
-    // Load recent journeys from database
-    this.loadRecentJourneysFromDB()
+    // Load recent journeys from database (must await so list is filled before UI settles)
+    await this.loadRecentJourneysFromDB()
     
     // Clear any old finished vehicles to prevent showing stale data on page refresh
     try {

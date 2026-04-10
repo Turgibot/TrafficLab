@@ -106,7 +106,8 @@ docker-compose up --build
 cd backend
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
+pip install torch==2.1.0 --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt -f https://data.pyg.org/whl/torch-2.1.0+cpu.html
 python init_db.py
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```

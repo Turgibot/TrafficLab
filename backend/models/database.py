@@ -8,8 +8,12 @@ import json
 # Database configuration
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/trafficlab")
 
-# Create database engine
-engine = create_engine(DATABASE_URL)
+# Create database engine (pre_ping + rollback on return avoid stale aborted transactions from the pool)
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_reset_on_return="rollback",
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Create base class for models
@@ -116,38 +120,62 @@ def create_tables():
     Base.metadata.create_all(bind=engine)
 
 def get_db():
-    """Get database session"""
+    """Get database session; rollback on errors so the connection is not left in aborted state."""
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
 # Journey CRUD operations
 
 def get_next_journey_number(db: Session):
-    """Get the next journey number for continuous numbering"""
-    try:
-        last_journey = db.query(Journey).order_by(Journey.journey_number.desc()).first()
-        if last_journey:
-            return last_journey.journey_number + 1
-        return 1
-    except Exception as e:
-        print(f"Error getting next journey number: {e}")
-        return 1
+    """Get the next journey number for continuous numbering."""
+    last_journey = db.query(Journey).order_by(Journey.journey_number.desc()).first()
+    if last_journey:
+        return last_journey.journey_number + 1
+    return 1
 
 def create_journey(db: Session, journey_data: dict):
     """Create a new journey in the database"""
     try:
+        allowed = {
+            'vehicle_id', 'start_edge', 'end_edge', 'route_edges',
+            'start_time', 'start_time_string', 'end_time', 'end_time_string',
+            'distance', 'predicted_eta', 'actual_duration', 'absolute_error',
+            'accuracy', 'status',
+        }
+        data = {k: v for k, v in journey_data.items() if k in allowed}
+
+        def _as_int(v):
+            if v is None:
+                return None
+            return int(round(float(v)))
+
+        for key in ('start_time', 'end_time', 'predicted_eta', 'actual_duration', 'absolute_error'):
+            if key in data and data[key] is not None:
+                data[key] = _as_int(data[key])
+
+        if 'distance' in data and data['distance'] is not None:
+            data['distance'] = float(data['distance'])
+        if 'accuracy' in data and data['accuracy'] is not None:
+            data['accuracy'] = float(data['accuracy'])
+
+        if data.get('predicted_eta') is None:
+            data['predicted_eta'] = 0
+
         # Get the next journey number
         journey_number = get_next_journey_number(db)
-        journey_data['journey_number'] = journey_number
-        
+        data['journey_number'] = journey_number
+
         # Convert route_edges to JSON string if it's a list
-        if 'route_edges' in journey_data and isinstance(journey_data['route_edges'], list):
-            journey_data['route_edges'] = json.dumps(journey_data['route_edges'])
-        
-        journey = Journey(**journey_data)
+        if 'route_edges' in data and isinstance(data['route_edges'], list):
+            data['route_edges'] = json.dumps(data['route_edges'])
+
+        journey = Journey(**data)
         db.add(journey)
         db.commit()
         db.refresh(journey)
