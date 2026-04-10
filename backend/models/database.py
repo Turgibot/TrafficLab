@@ -19,6 +19,28 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 # Create base class for models
 Base = declarative_base()
 
+def _debug_log_database_connect_settings(db_url: str) -> None:
+    """Log DB connection details. Set TRAFFICLAB_DEBUG_DB=1 (redacted) or full (includes repr(password))."""
+    from sqlalchemy.engine.url import make_url
+
+    mode = os.getenv("TRAFFICLAB_DEBUG_DB", "").strip().lower()
+    if mode not in ("1", "true", "yes", "full"):
+        return
+    try:
+        u = make_url(db_url)
+        safe = u.render_as_string(hide_password=True)
+        pw = u.password
+        print(
+            f"DEBUG TRAFFICLAB_DEBUG_DB: url={safe} user={u.username!r} host={u.host!r} "
+            f"port={u.port!r} database={u.database!r} password_is_none={pw is None} "
+            f"password_len={len(pw or '')}"
+        )
+        if mode == "full":
+            print(f"DEBUG TRAFFICLAB_DEBUG_DB full: password repr={pw!r}")
+    except Exception as e:
+        print(f"DEBUG TRAFFICLAB_DEBUG_DB: could not parse DATABASE_URL: {e!r}")
+
+
 class Journey(Base):
     """
     Database model for storing journey data
@@ -70,27 +92,38 @@ def create_database():
     """Create the database if it doesn't exist"""
     import psycopg2
     from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-    from urllib.parse import urlparse
-    
+    from sqlalchemy.engine.url import make_url
+
     try:
-        # Parse the DATABASE_URL to get connection details
         db_url = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/trafficlab")
-        parsed_url = urlparse(db_url)
-        
-        # Connect to PostgreSQL server (not to the specific database)
+        url = make_url(db_url)
+        if not url.host:
+            raise RuntimeError(
+                "DATABASE_URL has no host (expected e.g. postgresql://user:PASSWORD@db:5432/trafficlab). "
+                "Common causes: a '#' in the password/URL without quoting the line in .env, or a truncated URL "
+                "like postgresql://user: — check /opt/TrafficLab/.env on the server."
+            )
+        if url.host == "user":
+            raise RuntimeError(
+                "DATABASE_URL is parsed with host 'user' (wrong). You likely have postgresql://user: with a "
+                "missing password or everything after '#' was dropped as a comment in .env. Use a full URL: "
+                "postgresql://user:YOUR_PASSWORD@db:5432/trafficlab"
+            )
+
+        _debug_log_database_connect_settings(db_url)
+
         conn = psycopg2.connect(
-            host=parsed_url.hostname,
-            user=parsed_url.username,
-            password=parsed_url.password,
-            database='postgres'
+            host=url.host,
+            port=url.port or 5432,
+            user=url.username,
+            password=url.password,
+            dbname="postgres",
         )
         conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-        
-        # Create cursor
+
         cursor = conn.cursor()
-        
-        # Get database name from URL
-        db_name = parsed_url.path[1:] if parsed_url.path else 'trafficlab'
+
+        db_name = url.database or "trafficlab"
         
         # Check if database exists
         cursor.execute(f"SELECT 1 FROM pg_database WHERE datname = '{db_name}';")

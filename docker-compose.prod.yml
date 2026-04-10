@@ -25,6 +25,7 @@ services:
       - CORS_EXTRA_ORIGINS=${CORS_EXTRA_ORIGINS:-}
       - SUMO_HOME=/usr/share/sumo
       - NODE_ENV=production
+      - TRAFFICLAB_DEBUG_DB=${TRAFFICLAB_DEBUG_DB:-}
     depends_on:
       db:
         condition: service_healthy
