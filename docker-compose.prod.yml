@@ -21,7 +21,7 @@ services:
       - "127.0.0.1:8000:8000"
     environment:
       - PYTHONPATH=/app
-      - DATABASE_URL=${DATABASE_URL:-postgresql://user:password@db:5432/trafficlab}
+      - "DATABASE_URL=${DATABASE_URL:-postgresql://user:password@db:5432/trafficlab}"
       - CORS_EXTRA_ORIGINS=${CORS_EXTRA_ORIGINS:-}
       - SUMO_HOME=/usr/share/sumo
       - NODE_ENV=production
