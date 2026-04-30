@@ -3,7 +3,8 @@ FROM node:18-alpine as build
 
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --only=production
+# Dev deps (vite, @vitejs/plugin-vue, tailwind, …) are required for `vite build`; do not use --only=production here.
+RUN npm ci
 
 COPY . .
 RUN npm run build

@@ -83,8 +83,10 @@ The SmartTransportation Lab at Ruppin Academic Center develops cutting-edge solu
 1. **Install Python dependencies**
    ```bash
    cd backend
-   pip install -r requirements.txt
+   pip install torch==2.1.0 --index-url https://download.pytorch.org/whl/cpu
+   pip install -r requirements.txt -f https://data.pyg.org/whl/torch-2.1.0+cpu.html
    ```
+   (CPU PyTorch keeps installs small; for GPU, install `torch` from [pytorch.org](https://pytorch.org/get-started/locally/) instead, then the same `requirements.txt` line with the matching PyG wheel index if needed.)
 
 2. **Install SUMO**
    ```bash

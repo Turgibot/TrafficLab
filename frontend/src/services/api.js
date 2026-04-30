@@ -1,5 +1,8 @@
 // API Configuration Service
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+// Dev: default to backend on :8000. Production build: same-origin (empty) so /api/* goes through edge nginx.
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.DEV ? 'http://localhost:8000' : '')
 
 class ApiService {
   constructor() {

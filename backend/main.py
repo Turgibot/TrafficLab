@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict
@@ -16,10 +16,18 @@ class RouteRequest(BaseModel):
 
 app = FastAPI(title="SmartTransportation Lab API", version="1.0.0")
 
-# Enable CORS for frontend communication
+# Enable CORS for frontend communication (localhost vs 127.0.0.1 are different origins in browsers)
+_cors_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+_extra = os.getenv("CORS_EXTRA_ORIGINS", "").strip()
+if _extra:
+    _cors_origins.extend(o.strip() for o in _extra.split(",") if o.strip())
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -35,9 +43,38 @@ sumo_simulation = SUMOSimulation(sumo_config_path, sim_config_path)
 # Debug system state after initialization
 sumo_simulation.debug_system_state()
 
-@app.on_event("startup")    
+def _ensure_database_tables():
+    """Create DB + tables if missing (normally run once; safe to call repeatedly)."""
+    import time
+    from models.database import create_tables
+
+    last_err = None
+    for attempt in range(12):
+        try:
+            create_tables()
+            print("✅ Database tables ready")
+            return
+        except Exception as e:
+            last_err = e
+            print(f"⚠️ Database init attempt {attempt + 1}/12 failed: {e!r}")
+            time.sleep(1.5)
+    raise RuntimeError(f"Could not connect or initialize database after retries: {last_err!r}") from last_err
+
+
+@app.on_event("startup")
 async def startup_event():
+    import asyncio
+
+    backend_dir = os.path.dirname(os.path.abspath(__file__))
+    await asyncio.to_thread(_merge_labels_if_needed, backend_dir)
+    await asyncio.to_thread(_ensure_database_tables)
     print("✅ System initialized successfully")
+
+
+def _merge_labels_if_needed(backend_dir: str) -> None:
+    from labels_util import ensure_unified_labels_json
+
+    ensure_unified_labels_json(backend_dir)
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -50,6 +87,18 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+
+@app.get("/health/db")
+async def health_db(db: Session = Depends(get_db)):
+    """Verify Postgres is reachable and the app can open a session."""
+    from sqlalchemy import text
+
+    try:
+        db.execute(text("SELECT 1"))
+        return {"status": "healthy", "database": "connected"}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Database unavailable: {e!r}")
 
 @app.get("/api/simulation/status")
 async def get_simulation_status():
@@ -229,8 +278,8 @@ async def get_simulation_results(limit: int = 10):
 # Journey API endpoints
 
 @app.post("/api/journeys/save")
-async def save_journey(journey_data: dict, db: Session = Depends(get_db)):
-    """Save a journey to the database"""
+async def save_journey(journey_data: dict = Body(...), db: Session = Depends(get_db)):
+    """Save a journey to the database (JSON body must be explicit Body(...) or FastAPI may not bind it)."""
     try:
         from models.database import create_journey
         
@@ -864,16 +913,30 @@ async def seed_random_journeys(db: Session = Depends(get_db)):
         
         print("🌱 Starting data seeding process...")
         
-        # Load labels.json
-        labels_file = "labels.json"
-        if not os.path.exists(labels_file):
-            raise HTTPException(status_code=404, detail="labels.json file not found")
+        backend_dir = os.path.dirname(os.path.abspath(__file__))
+        labels_file = os.path.join(backend_dir, "labels.json")
+        example_file = os.path.join(backend_dir, "labels.json.example")
+        if not os.path.isfile(labels_file):
+            if os.path.isfile(example_file):
+                labels_file = example_file
+                print(
+                    "📎 Using labels.json.example (copy to labels.json for a full dataset; "
+                    ".gitignore keeps labels.json local)."
+                )
+            else:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        "No labels.json or labels.json.example next to main.py. "
+                        "Add backend/labels.json or restore labels.json.example."
+                    ),
+                )
         
-        print("📖 Loading labels.json...")
+        print(f"📖 Loading {os.path.basename(labels_file)}...")
         with open(labels_file, 'r') as f:
             all_journeys = json.load(f)
         
-        print(f"📊 Loaded {len(all_journeys)} total journeys from labels.json")
+        print(f"📊 Loaded {len(all_journeys)} total journeys from labels file")
         
         # Select 100 random journeys
         selected_journeys = random.sample(all_journeys, min(100, len(all_journeys)))
@@ -1002,10 +1065,14 @@ async def seed_random_journeys(db: Session = Depends(get_db)):
             "next_journey_number": next_journey_number + inserted_count
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"❌ Error seeding data: {e}")
+        import traceback
+        tb = traceback.format_exc()
+        print(f"❌ Error seeding data: {e!r}\n{tb}")
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to seed data: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to seed data: {e!r}")
 
 @app.get("/api/simulation/vehicles/finished")
 async def get_finished_vehicles():

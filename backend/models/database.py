@@ -8,12 +8,38 @@ import json
 # Database configuration
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/trafficlab")
 
-# Create database engine
-engine = create_engine(DATABASE_URL)
+# Create database engine (pre_ping + rollback on return avoid stale aborted transactions from the pool)
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_reset_on_return="rollback",
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Create base class for models
 Base = declarative_base()
+
+def _debug_log_database_connect_settings(db_url: str) -> None:
+    """Log DB connection details. Set TRAFFICLAB_DEBUG_DB=1 (redacted) or full (includes repr(password))."""
+    from sqlalchemy.engine.url import make_url
+
+    mode = os.getenv("TRAFFICLAB_DEBUG_DB", "").strip().lower()
+    if mode not in ("1", "true", "yes", "full"):
+        return
+    try:
+        u = make_url(db_url)
+        safe = u.render_as_string(hide_password=True)
+        pw = u.password
+        print(
+            f"DEBUG TRAFFICLAB_DEBUG_DB: url={safe} user={u.username!r} host={u.host!r} "
+            f"port={u.port!r} database={u.database!r} password_is_none={pw is None} "
+            f"password_len={len(pw or '')}"
+        )
+        if mode == "full":
+            print(f"DEBUG TRAFFICLAB_DEBUG_DB full: password repr={pw!r}")
+    except Exception as e:
+        print(f"DEBUG TRAFFICLAB_DEBUG_DB: could not parse DATABASE_URL: {e!r}")
+
 
 class Journey(Base):
     """
@@ -66,27 +92,38 @@ def create_database():
     """Create the database if it doesn't exist"""
     import psycopg2
     from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-    from urllib.parse import urlparse
-    
+    from sqlalchemy.engine.url import make_url
+
     try:
-        # Parse the DATABASE_URL to get connection details
         db_url = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/trafficlab")
-        parsed_url = urlparse(db_url)
-        
-        # Connect to PostgreSQL server (not to the specific database)
+        url = make_url(db_url)
+        if not url.host:
+            raise RuntimeError(
+                "DATABASE_URL has no host (expected e.g. postgresql://user:PASSWORD@db:5432/trafficlab). "
+                "Common causes: a '#' in the password/URL without quoting the line in .env, or a truncated URL "
+                "like postgresql://user: — check /opt/TrafficLab/.env on the server."
+            )
+        if url.host == "user":
+            raise RuntimeError(
+                "DATABASE_URL is parsed with host 'user' (wrong). You likely have postgresql://user: with a "
+                "missing password or everything after '#' was dropped as a comment in .env. Use a full URL: "
+                "postgresql://user:YOUR_PASSWORD@db:5432/trafficlab"
+            )
+
+        _debug_log_database_connect_settings(db_url)
+
         conn = psycopg2.connect(
-            host=parsed_url.hostname,
-            user=parsed_url.username,
-            password=parsed_url.password,
-            database='postgres'
+            host=url.host,
+            port=url.port or 5432,
+            user=url.username,
+            password=url.password,
+            dbname="postgres",
         )
         conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-        
-        # Create cursor
+
         cursor = conn.cursor()
-        
-        # Get database name from URL
-        db_name = parsed_url.path[1:] if parsed_url.path else 'trafficlab'
+
+        db_name = url.database or "trafficlab"
         
         # Check if database exists
         cursor.execute(f"SELECT 1 FROM pg_database WHERE datname = '{db_name}';")
@@ -116,38 +153,62 @@ def create_tables():
     Base.metadata.create_all(bind=engine)
 
 def get_db():
-    """Get database session"""
+    """Get database session; rollback on errors so the connection is not left in aborted state."""
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
 # Journey CRUD operations
 
 def get_next_journey_number(db: Session):
-    """Get the next journey number for continuous numbering"""
-    try:
-        last_journey = db.query(Journey).order_by(Journey.journey_number.desc()).first()
-        if last_journey:
-            return last_journey.journey_number + 1
-        return 1
-    except Exception as e:
-        print(f"Error getting next journey number: {e}")
-        return 1
+    """Get the next journey number for continuous numbering."""
+    last_journey = db.query(Journey).order_by(Journey.journey_number.desc()).first()
+    if last_journey:
+        return last_journey.journey_number + 1
+    return 1
 
 def create_journey(db: Session, journey_data: dict):
     """Create a new journey in the database"""
     try:
+        allowed = {
+            'vehicle_id', 'start_edge', 'end_edge', 'route_edges',
+            'start_time', 'start_time_string', 'end_time', 'end_time_string',
+            'distance', 'predicted_eta', 'actual_duration', 'absolute_error',
+            'accuracy', 'status',
+        }
+        data = {k: v for k, v in journey_data.items() if k in allowed}
+
+        def _as_int(v):
+            if v is None:
+                return None
+            return int(round(float(v)))
+
+        for key in ('start_time', 'end_time', 'predicted_eta', 'actual_duration', 'absolute_error'):
+            if key in data and data[key] is not None:
+                data[key] = _as_int(data[key])
+
+        if 'distance' in data and data['distance'] is not None:
+            data['distance'] = float(data['distance'])
+        if 'accuracy' in data and data['accuracy'] is not None:
+            data['accuracy'] = float(data['accuracy'])
+
+        if data.get('predicted_eta') is None:
+            data['predicted_eta'] = 0
+
         # Get the next journey number
         journey_number = get_next_journey_number(db)
-        journey_data['journey_number'] = journey_number
-        
+        data['journey_number'] = journey_number
+
         # Convert route_edges to JSON string if it's a list
-        if 'route_edges' in journey_data and isinstance(journey_data['route_edges'], list):
-            journey_data['route_edges'] = json.dumps(journey_data['route_edges'])
-        
-        journey = Journey(**journey_data)
+        if 'route_edges' in data and isinstance(data['route_edges'], list):
+            data['route_edges'] = json.dumps(data['route_edges'])
+
+        journey = Journey(**data)
         db.add(journey)
         db.commit()
         db.refresh(journey)

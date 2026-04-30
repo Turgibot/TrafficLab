@@ -150,9 +150,10 @@ start_local() {
     # Activate virtual environment
     source venv/bin/activate
     
-    # Install dependencies
+    # Install dependencies (torch first: CPU wheels; PyG index matches torch 2.1.0+cpu)
     print_status "Installing Python dependencies..."
-    pip install -r requirements.txt
+    pip install --retries 10 torch==2.1.0 --index-url https://download.pytorch.org/whl/cpu
+    pip install --retries 10 -r requirements.txt -f https://data.pyg.org/whl/torch-2.1.0+cpu.html
     
     # Initialize database if needed
     if [ -f "init_db.py" ]; then
