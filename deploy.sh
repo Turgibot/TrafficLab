@@ -1,58 +1,66 @@
 #!/bin/bash
 
-# SmartTransportation Lab - AWS EC2 Deployment Script
+# SmartTransportation Lab - Deployment Script
 # Usage: ./deploy.sh [production|development]
 
 set -e
 
 ENVIRONMENT=${1:-production}
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
 
 echo "🚀 Deploying SmartTransportation Lab in $ENVIRONMENT mode..."
 
-# Check if Docker is installed
 if ! command -v docker &> /dev/null; then
     echo "❌ Docker is not installed. Please install Docker first."
     exit 1
 fi
 
-# Check if Docker Compose is installed
-if ! command -v docker-compose &> /dev/null; then
-    echo "❌ Docker Compose is not installed. Please install Docker Compose first."
+if ! docker compose version &> /dev/null; then
+    echo "❌ Docker Compose v2 is not available (docker compose)."
     exit 1
 fi
 
-# Create necessary directories
-echo "📁 Creating directories..."
-mkdir -p ssl
-mkdir -p logs
+mkdir -p ssl logs certbot/www
 
-# Set environment variables
 if [ "$ENVIRONMENT" = "production" ]; then
     echo "🔧 Setting up production environment..."
     export NODE_ENV=production
     COMPOSE_FILE="docker-compose.prod.yml"
+    ENV_FILE="${ENV_FILE:-.env}"
+
+    if [ ! -f "$ENV_FILE" ]; then
+        echo "⚠️  No $ENV_FILE found. Copy env.docker-prod.example to .env and set secrets before a real deploy."
+    fi
+
+    if [ ! -f ssl/cert.pem ] || [ ! -f ssl/key.pem ]; then
+        echo "🔒 No TLS certificate in ./ssl — generating a self-signed cert for first boot..."
+        echo "   For a public domain, run: ./scripts/ssl-init.sh letsencrypt YOUR_DOMAIN admin@example.com"
+        ./scripts/ssl-init.sh self-signed localhost
+    fi
+
+    COMPOSE=(docker compose -f "$COMPOSE_FILE")
+    if [ -f "$ENV_FILE" ]; then
+        COMPOSE+=(--env-file "$ENV_FILE")
+    fi
 else
     echo "🔧 Setting up development environment..."
     export NODE_ENV=development
     COMPOSE_FILE="docker-compose.yml"
+    COMPOSE=(docker compose -f "$COMPOSE_FILE")
 fi
 
-# Stop existing containers
 echo "🛑 Stopping existing containers..."
-docker-compose -f $COMPOSE_FILE down || true
+"${COMPOSE[@]}" down || true
 
-# Build and start containers
 echo "🏗️ Building and starting containers..."
-docker-compose -f $COMPOSE_FILE up --build -d
+"${COMPOSE[@]}" up --build -d
 
-# Wait for services to be ready
 echo "⏳ Waiting for services to start..."
 sleep 10
 
-# Check if services are running
 echo "🔍 Checking service health..."
 
-# Check backend
 if curl -f http://localhost:8000/health > /dev/null 2>&1; then
     echo "✅ Backend is healthy"
 else
@@ -60,23 +68,46 @@ else
     exit 1
 fi
 
-# Check frontend
-if curl -f http://localhost:3000 > /dev/null 2>&1; then
-    echo "✅ Frontend is healthy"
+if [ "$ENVIRONMENT" = "production" ]; then
+    if curl -fk https://localhost/health > /dev/null 2>&1; then
+        echo "✅ HTTPS edge (nginx) is healthy"
+    else
+        echo "❌ HTTPS health check failed (check nginx logs and ssl/cert.pem)"
+        exit 1
+    fi
+
+    echo ""
+    echo "🎉 Production deployment completed successfully!"
+    echo ""
+    echo "📊 Service URLs:"
+    echo "   Site:     https://localhost/  (use your domain or -k for self-signed)"
+    echo "   Health:   https://localhost/health"
+    echo "   API Docs: https://localhost/docs"
+    echo "   Backend:  http://127.0.0.1:8000 (loopback only)"
 else
-    echo "❌ Frontend health check failed"
-    exit 1
+    if curl -f http://localhost:3000 > /dev/null 2>&1; then
+        echo "✅ Frontend is healthy"
+    else
+        echo "❌ Frontend health check failed"
+        exit 1
+    fi
+
+    echo ""
+    echo "🎉 Development deployment completed successfully!"
+    echo ""
+    echo "📊 Service URLs:"
+    echo "   Frontend: http://localhost:3000"
+    echo "   Backend:  http://localhost:8000"
+    echo "   API Docs: http://localhost:8000/docs"
 fi
 
-echo "🎉 Deployment completed successfully!"
-echo ""
-echo "📊 Service URLs:"
-echo "   Frontend: http://localhost:3000"
-echo "   Backend:  http://localhost:8000"
-echo "   API Docs: http://localhost:8000/docs"
 echo ""
 echo "📝 Useful commands:"
-echo "   View logs:     docker-compose -f $COMPOSE_FILE logs -f"
-echo "   Stop services: docker-compose -f $COMPOSE_FILE down"
-echo "   Restart:       docker-compose -f $COMPOSE_FILE restart"
+echo "   View logs:     docker compose -f $COMPOSE_FILE logs -f"
+echo "   Stop services: docker compose -f $COMPOSE_FILE down"
+echo "   Restart:       docker compose -f $COMPOSE_FILE restart"
+if [ "$ENVIRONMENT" = "production" ]; then
+    echo "   Trusted TLS:   ./scripts/ssl-init.sh letsencrypt YOUR_DOMAIN admin@example.com"
+    echo "   Renew TLS:     ./scripts/ssl-renew.sh"
+fi
 echo ""

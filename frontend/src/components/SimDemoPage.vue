@@ -594,9 +594,11 @@
                       <span class="text-xs text-gray-600">Trucks</span>
                     </div>
                     <div class="flex items-center">
-                      <svg class="w-3 h-3 mr-2" viewBox="0 0 12 12">
-                        <path d="M6 1l1.5 3L12 4.5l-2.5 2.5L11 11l-3-1.5L5 11l1-4L3 4.5l3.5-.5L6 1z" fill="#fbbf24" stroke="#000000" stroke-width="0.3"/>
-                      </svg>
+                      <img
+                        src="/images/car.png"
+                        alt=""
+                        class="h-3 w-6 mr-2 object-contain shrink-0"
+                      />
                       <span class="text-xs text-gray-600">Your Vehicle</span>
                     </div>
                     <div class="flex items-center">

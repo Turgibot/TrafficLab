@@ -1,5 +1,7 @@
 # SmartTransportation Lab - Deployment Guide
 
+**First production deploy (step-by-step):** see **[docs/PRODUCTION-DEPLOY.md](docs/PRODUCTION-DEPLOY.md)**.
+
 ## 🚀 Quick Start
 
 ### Development (Local)
@@ -121,12 +123,13 @@ sudo ufw allow 443
 ```
 
 ### SSL Certificate (Let's Encrypt)
-```bash
-# Install Certbot
-sudo apt install certbot python3-certbot-nginx -y
 
-# Get certificate
-sudo certbot --nginx -d yourdomain.com
+Use the project scripts (see **`docs/PRODUCTION-DEPLOY.md`**):
+
+```bash
+chmod +x scripts/ssl-init.sh scripts/ssl-renew.sh
+./scripts/ssl-init.sh letsencrypt yourdomain.com admin@example.com
+./scripts/ssl-renew.sh   # for cron-based renewal
 ```
 
 ## 💰 Cost Estimation

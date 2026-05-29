@@ -47,36 +47,35 @@ git checkout <branch-you-ship>   # e.g. main or deploy
 
 ## 4. TLS certificates (HTTPS)
 
-Edge nginx expects:
+Edge nginx reads **`ssl/cert.pem`** and **`ssl/key.pem`** at the project root. Use the helper scripts (port **80** must reach this host for Let's Encrypt):
 
-- **`ssl/cert.pem`**
-- **`ssl/key.pem`**
-
-in **`./ssl`** at the **project root** (same directory as `docker-compose.prod.yml`).
-
-### Option A — self-signed (testing / internal only)
+### Option A — self-signed (testing / first boot)
 
 ```bash
-mkdir -p ssl
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout ssl/key.pem -out ssl/cert.pem \
-  -subj "/CN=your-server-hostname"
+chmod +x scripts/ssl-init.sh scripts/ssl-renew.sh
+./scripts/ssl-init.sh self-signed your-server-hostname
 ```
 
-Browsers will show a warning until you use a real certificate.
+Browsers will show a warning until you use a real certificate. **`deploy.sh production`** creates a self-signed cert automatically if `./ssl` is empty.
 
 ### Option B — Let’s Encrypt (public domain)
 
-Point **A record** for your domain to the server’s public IP. Temporarily serve HTTP validation (or use **certbot** with **standalone** / **DNS**). Typical pattern:
+1. Point an **A record** for your domain to the server’s public IP.
+2. Open **80** and **443** in the firewall.
+3. Set **`CORS_EXTRA_ORIGINS=https://yourdomain.com`** in **`.env`**.
+4. Obtain and install a trusted certificate:
 
 ```bash
-sudo apt install -y certbot
-# obtain certs (method depends on your setup), then copy fullchain + privkey:
-# sudo cp /etc/letsencrypt/live/yourdomain/fullchain.pem ssl/cert.pem
-# sudo cp /etc/letsencrypt/live/yourdomain/privkey.pem ssl/key.pem
+./deploy.sh production
+./scripts/ssl-init.sh letsencrypt yourdomain.com admin@example.com
 ```
 
-Then reload nginx after renewal (automation via cron or certbot hooks).
+Certbot stores state under **`certbot/conf/`**; nginx serves HTTP-01 challenges from **`certbot/www/`**. Renewals:
+
+```bash
+# monthly cron example
+0 3 1 * * cd /path/to/TrafficLab && ./scripts/ssl-renew.sh >> /var/log/trafficlab-ssl-renew.log 2>&1
+```
 
 ---
 
@@ -178,9 +177,16 @@ docker compose -f docker-compose.prod.yml exec -T db \
 
 ---
 
-## 10. `deploy.sh` note
+## 10. `deploy.sh`
 
-The bundled **`deploy.sh`** targets an older workflow (`docker-compose` v1 and dev ports). Prefer the **`docker compose -f docker-compose.prod.yml ...`** commands above unless you update the script for Compose v2 and prod URLs.
+From the repo root:
+
+```bash
+chmod +x deploy.sh scripts/ssl-init.sh scripts/ssl-renew.sh
+./deploy.sh production
+```
+
+Production mode uses **`docker-compose.prod.yml`**, loads **`.env`** when present, bootstraps a self-signed cert if **`ssl/`** is empty, and smoke-tests **`https://localhost/health`**. For a trusted public certificate, run **`./scripts/ssl-init.sh letsencrypt ...`** after DNS points at the server.
 
 ---
 

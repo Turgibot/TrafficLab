@@ -137,6 +137,10 @@ celerybeat.pid
 # Environments
 .env
 .envrc
+
+# TLS (generate on server; never commit private keys)
+ssl/
+certbot/
 .venv
 env/
 venv/

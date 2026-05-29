@@ -50,11 +50,10 @@ The SmartTransportation Lab at Ruppin Academic Center develops cutting-edge solu
 
 ### Prerequisites
 
-- Docker and Docker Compose
-- Python 3.8+ (for local development)
-- Node.js 16+ (for frontend development)
+- **Docker (recommended):** Docker Engine and Docker Compose (v2: `docker compose`, or legacy `docker-compose`)
+- **Manual setup:** Python 3.10+ (3.11 matches the backend container), Node.js 18+, PostgreSQL 15+, and SUMO (see below)
 
-### Installation
+### Run everything with Docker Compose (recommended)
 
 1. **Clone the repository**
    ```bash
@@ -62,73 +61,96 @@ The SmartTransportation Lab at Ruppin Academic Center develops cutting-edge solu
    cd TrafficLab
    ```
 
-2. **Start with Docker Compose (Recommended)**
+2. **Start the stack**
    ```bash
-   docker-compose up --build
+   docker compose up --build
    ```
+   If your install only provides the older CLI, use: `docker-compose up --build`
 
-   This will start:
-   - Frontend on http://localhost:3000
-   - Backend API on http://localhost:8000
-   - PostgreSQL database on localhost:5432
+   This starts:
+   - **Frontend (Vite):** http://localhost:3000
+   - **Backend (FastAPI):** http://localhost:8000
+   - **PostgreSQL:** `localhost:5432` (defaults in `docker-compose.yml`: database `trafficlab`, user `user`, password `password`)
 
-3. **Access the application**
-   - Open http://localhost:3000 in your browser
-   - The simulation will start automatically
+3. **Open the app**
+   - Homepage: http://localhost:3000
+   - ETA / journey demo: http://localhost:3000/demo
+   - SUMO simulation demo: http://localhost:3000/sim-demo
 
-### Manual Installation
+   The backend creates database tables on startup; you do not need to run `init_db.py` when using this compose file.
 
-#### Backend Setup
+### Manual installation (backend + frontend on the host)
 
-1. **Install Python dependencies**
-   ```bash
-   cd backend
-   pip install torch==2.1.0 --index-url https://download.pytorch.org/whl/cpu
-   pip install -r requirements.txt -f https://data.pyg.org/whl/torch-2.1.0+cpu.html
-   ```
-   (CPU PyTorch keeps installs small; for GPU, install `torch` from [pytorch.org](https://pytorch.org/get-started/locally/) instead, then the same `requirements.txt` line with the matching PyG wheel index if needed.)
+Use this when you run Node and Python locally. You still need PostgreSQL and SUMO on your machine (or only Postgres via Docker).
 
-2. **Install SUMO**
-   ```bash
-   # Ubuntu/Debian
-   sudo apt-get install sumo sumo-tools sumo-doc
-   
-   # macOS
-   brew install sumo
-   
-   # Or download from: https://eclipse.org/sumo/
-   ```
+#### 1. PostgreSQL
 
-3. **Set up the database**
-   ```bash
-   python init_db.py
-   ```
+The backend defaults to `postgresql://user:password@localhost:5432/trafficlab` (see `backend/models/database.py`). Create a database and role that match that URL, or set `DATABASE_URL` to your own connection string.
 
-4. **Start the backend**
-   ```bash
-   uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-   ```
+**Convenient option:** from the repo root, start only the database container, then use the default URL:
 
-#### Frontend Setup
+```bash
+docker compose up -d db
+```
 
-1. **Install Node.js dependencies**
-   ```bash
-   cd frontend
-   npm install
-   ```
+Wait until the DB is healthy before starting the backend.
 
-2. **Start the development server**
-   ```bash
-   npm run dev
-   ```
+#### 2. Backend
+
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install torch==2.1.0 --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt -f https://data.pyg.org/whl/torch-2.1.0+cpu.html
+```
+
+CPU PyTorch keeps installs small; for GPU, install `torch` from [pytorch.org](https://pytorch.org/get-started/locally/) first, then install `requirements.txt` with the matching PyTorch Geometric wheel index if needed.
+
+**SUMO** (required for simulation features):
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install sumo sumo-tools sumo-doc
+
+# macOS
+brew install sumo
+```
+
+Ensure `sumo` is on your `PATH`. If TraCI cannot find SUMO, set `SUMO_HOME` per the [SUMO documentation](https://eclipse.dev/sumo/).
+
+**Initialize tables (optional):** tables are also created when the API starts, but you can run:
+
+```bash
+python init_db.py
+```
+
+**Run the API** (run from the `backend` directory so imports and asset paths resolve):
+
+```bash
+export DATABASE_URL=postgresql://user:password@localhost:5432/trafficlab   # adjust if needed
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+#### 3. Frontend
+
+In a second terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Vite serves the UI at **http://localhost:3000**. In development the client calls **http://localhost:8000** (see `frontend/src/services/api.js`). To use another API origin, set `VITE_API_BASE_URL`.
 
 ## 📖 Usage
 
 ### Interactive Demo
 
-1. **Navigate to the Demo Page**
-   - Click "Try Live Demo" on the homepage
-   - Or visit http://localhost:3000/demo
+1. **Open a demo**
+   - **Journey / ETA demo:** click "Try Live Demo" on the homepage, or open http://localhost:3000/demo
+   - **SUMO simulation map:** http://localhost:3000/sim-demo
 
 2. **Set Route Points**
    - Click on roads in the traffic network map to set start and destination points
@@ -155,19 +177,17 @@ curl http://localhost:8000/health
 
 #### Get Simulation Status
 ```bash
-curl http://localhost:8000/simulation/status
+curl http://localhost:8000/api/simulation/status
 ```
 
-#### Request ETA Prediction
+#### Journey statistics (example)
 ```bash
-curl -X POST http://localhost:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{"start_edge": "edge1", "end_edge": "edge2"}'
+curl http://localhost:8000/api/journeys/statistics
 ```
 
-#### Get Analytics
+#### Vehicle prediction (replace `VEHICLE_ID` with an active vehicle id from the simulation)
 ```bash
-curl http://localhost:8000/analytics/mae
+curl http://localhost:8000/api/simulation/vehicles/VEHICLE_ID/prediction
 ```
 
 ## 📊 Features
@@ -226,25 +246,18 @@ TrafficLab/
 
 ### Running Tests
 ```bash
-# Backend tests
+# Backend: install pytest if needed, then run from backend/
 cd backend
+pip install pytest
 python -m pytest
-
-# Frontend tests
-cd frontend
-npm test
 ```
 
 ### Code Quality
 ```bash
-# Python formatting
+# Python (install dev tools as needed)
 cd backend
 black .
 flake8 .
-
-# JavaScript formatting
-cd frontend
-npm run lint
 ```
 
 ## 📈 Performance
