@@ -287,6 +287,9 @@ This research is supported by the Israeli Ministry of Innovation, Science and Te
 - **Vue.js Community** - Frontend framework
 - **Open Source Contributors** - Various libraries and tools
 
+## Presentation of the NIDS paper
+
+**Presentation link**: [click here](https://docs.google.com/presentation/d/1QG4cJwu7_Yj1AbClyxYz9sE_JS4rW4xOPbKHV1vMZMU/edit?slide=id.g3f8dcd00aad_201_61#slide=id.g3f8dcd00aad_201_61)
 ---
 
 **SmartTransportation Lab** - Advancing Traffic Simulation and ETA Prediction through AI
